@@ -4,7 +4,7 @@ packages:
 
 catalog:
   execa: ^9.6.1
-  typescript: ^5.9.3
+  typescript: ^6.0.3
   vite: ^7.3.5
 
 overrides:
@@ -12,6 +12,13 @@ overrides:
   '@sveltejs/kit>cookie': 0.7.0
   'next>postcss': 8.5.23
   'vitepress>vite': 6.4.3
+
+peerDependencyRules:
+  allowedVersions:
+    # These build tools declare TS5-only peers; builds and declaration checks
+    # in the TS5/TS6 CI matrix verify this specific TypeScript 6 release.
+    'unbuild@3.6.1>typescript': 6.0.3
+    'rollup-plugin-dts@6.3.0>typescript': 6.0.3
 
 allowBuilds:
   '@biomejs/biome': true
