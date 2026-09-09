@@ -7,12 +7,10 @@ catalog:
   typescript: ^5.9.3
   vite: ^7.3.1
 
-ignoredBuiltDependencies:
-  - '@swc/core'
-  - esbuild
-  - msw
-  - sharp
-  - svelte-preprocess
-
-onlyBuiltDependencies:
-  - '@biomejs/biome'
+allowBuilds:
+  '@biomejs/biome': true
+  '@swc/core': false
+  esbuild: false
+  msw: false
+  sharp: false
+  svelte-preprocess: false
