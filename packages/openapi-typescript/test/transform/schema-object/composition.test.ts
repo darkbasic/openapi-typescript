@@ -1,7 +1,13 @@
 import { fileURLToPath } from "node:url";
-import ts from "typescript";
-import { astToString, stringToAST } from "../../../src/lib/ts.js";
+import {
+  astToString,
+  type FooterDeclaration,
+  propertySignature,
+  renderFooterDeclaration,
+  typeLiteral,
+} from "../../../src/lib/ts.js";
 import transformSchemaObject from "../../../src/transform/schema-object.js";
+import type { PropertySignatureLike } from "../../../src/types.js";
 import { DEFAULT_CTX, expectTypeScriptToCompile, type TestCase } from "../../test-helpers.js";
 
 const DEFAULT_OPTIONS = {
@@ -759,14 +765,10 @@ describe("composition", () => {
   }
   test("allOf > preserves unsafe required-only constraints", () => {
     const transformPropertyOptions: any = { ...DEFAULT_OPTIONS, ctx: { ...DEFAULT_OPTIONS.ctx } };
-    transformPropertyOptions.ctx.transformProperty = (property: ts.PropertySignature) =>
-      ts.factory.updatePropertySignature(
-        property,
-        property.modifiers,
-        ts.factory.createIdentifier("renamed"),
-        property.questionToken,
-        property.type,
-      );
+    transformPropertyOptions.ctx.transformProperty = (property: PropertySignatureLike) => ({
+      ...property,
+      name: "renamed",
+    });
     const deprecatedOptions = optionsWithSchemas({
       Base: {
         type: "object",
@@ -953,9 +955,7 @@ describe("composition", () => {
     const replacementOptions = baseOptions();
     let occurrence = 0;
     replacementOptions.ctx.transform = (item) =>
-      item.required?.includes("required_string")
-        ? objectType({ [`occurrence${++occurrence}`]: ts.factory.createKeywordTypeNode(ts.SyntaxKind.StringKeyword) })
-        : undefined;
+      item.required?.includes("required_string") ? objectType({ [`occurrence${++occurrence}`]: "string" }) : undefined;
     const replaced = astToString(transformSchemaObject(schema as any, replacementOptions));
     expect(occurrence).toBe(2);
     expect(replaced).toContain("occurrence1: string");
@@ -991,7 +991,7 @@ describe("composition", () => {
         baseSchema,
         { Base: BASE_SCHEMA },
         (options) => {
-          options.ctx.transform = () => ts.factory.createKeywordTypeNode(ts.SyntaxKind.NumberKeyword);
+          options.ctx.transform = () => "number";
         },
         'components["schemas"]["Base"] & number',
       ],
@@ -1001,9 +1001,7 @@ describe("composition", () => {
         { Base: BASE_SCHEMA },
         (options) => {
           options.ctx.postTransform = (type) =>
-            astToString(type).trim() === "Record<string, never>"
-              ? ts.factory.createKeywordTypeNode(ts.SyntaxKind.NumberKeyword)
-              : undefined;
+            astToString(type).trim() === "Record<string, never>" ? "number" : undefined;
         },
         'components["schemas"]["Base"] & number',
       ],
@@ -1020,9 +1018,7 @@ describe("composition", () => {
         {},
         (options) => {
           options.ctx.transform = (schema) =>
-            schema.required?.includes("first")
-              ? objectType({ replacement: ts.factory.createKeywordTypeNode(ts.SyntaxKind.BooleanKeyword) })
-              : undefined;
+            schema.required?.includes("first") ? objectType({ replacement: "boolean" }) : undefined;
         },
         `WithRequiredObject<{
     first?: string;
@@ -1046,9 +1042,7 @@ describe("composition", () => {
         { Base: BASE_SCHEMA },
         (options) => {
           options.ctx.postTransform = (type) =>
-            astToString(type).trim() === 'components["schemas"]["Base"]'
-              ? ts.factory.createKeywordTypeNode(ts.SyntaxKind.NumberKeyword)
-              : undefined;
+            astToString(type).trim() === 'components["schemas"]["Base"]' ? "number" : undefined;
         },
         'WithRequiredObject<number, "required_string">',
       ],
@@ -1086,9 +1080,12 @@ describe("composition", () => {
     ).toBe('WithRequiredObject<Omit<components["schemas"]["parent"], "operation">, "name">');
   });
 
-  test("allOf > footer helper conflict uses the inline object constraint", () => {
+  test.each([
+    "WithRequiredObject",
+    "WithRequired\\u004fbject",
+  ])("allOf > footer helper conflict %s uses the inline object constraint", (name) => {
     const options = baseOptions();
-    options.ctx.injectFooter = stringToAST("interface WithRequiredObject { caller: true }") as ts.Node[];
+    options.ctx.injectFooter = [`interface ${name} { caller: true }`];
     options.ctx.transform = () => undefined;
     const result = astToString(
       transformSchemaObject(
@@ -1097,10 +1094,12 @@ describe("composition", () => {
       ),
     ).trim();
     expect(result).not.toContain("WithRequiredObject<");
-    expect(astToString(options.ctx.injectFooter)).not.toContain("type WithRequiredObject<");
+    expect(astToString(options.ctx.injectFooter.map(renderFooterDeclaration))).not.toContain(
+      "type WithRequiredObject<",
+    );
     expectTypeScriptToCompile(`
       interface components { schemas: { Base: { required_string?: string } } }
-      ${astToString(options.ctx.injectFooter)}
+      ${astToString(options.ctx.injectFooter.map(renderFooterDeclaration))}
       type Generated = ${result};
       const valid: Generated = { required_string: "value" };
       // @ts-expect-error required_string remains required
@@ -1115,7 +1114,7 @@ describe("composition", () => {
     });
     options.ctx.transform = (schema) =>
       "properties" in schema && schema.properties?.callback_value
-        ? objectType({ callback_value: ts.factory.createKeywordTypeNode(ts.SyntaxKind.NumberKeyword) }, true)
+        ? objectType({ callback_value: "number" }, true)
         : undefined;
 
     const result = astToString(
@@ -1177,7 +1176,7 @@ function optionsWithSchemas(schemas: Record<string, any>) {
     ...DEFAULT_OPTIONS,
     ctx: {
       ...DEFAULT_OPTIONS.ctx,
-      injectFooter: [] as ts.Node[],
+      injectFooter: [] as FooterDeclaration[],
       resolve($ref: string) {
         const name = $ref.startsWith("#/components/schemas/") ? $ref.slice("#/components/schemas/".length) : undefined;
         return name ? schemas[name] : undefined;
@@ -1198,15 +1197,8 @@ function baseOptions() {
   return optionsWithSchemas({ Base: BASE_SCHEMA });
 }
 
-function objectType(properties: Record<string, ts.TypeNode>, optional = false) {
-  return ts.factory.createTypeLiteralNode(
-    Object.entries(properties).map(([name, type]) =>
-      ts.factory.createPropertySignature(
-        undefined,
-        name,
-        optional ? ts.factory.createToken(ts.SyntaxKind.QuestionToken) : undefined,
-        type,
-      ),
-    ),
+function objectType(properties: Record<string, string>, optional = false) {
+  return typeLiteral(
+    Object.entries(properties).map(([name, type]) => propertySignature({ name, type, optional, indent: "    " })),
   );
 }

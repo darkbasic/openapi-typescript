@@ -56,6 +56,26 @@ jobs:
           pnpm --filter '@example/openapi-fetch-vue-3' type-check
           pnpm --filter '@example/openapi-fetch-sveltekit' check
           pnpm --filter '@example/openapi-fetch-nextjs' exec tsc --noEmit
+  test-consumers:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        node-version: [22, 24]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node-version }}
+      - uses: pnpm/action-setup@v6
+        with:
+          run_install: true
+      - run: pnpm --filter openapi-typescript --filter openapi-typescript-helpers build
+      - name: Test TypeScript 5, 6, 7 and compiler-free consumers
+        run: |
+          for version in 5.9.3 6.0.3 7.0.2 none; do
+            pnpm --filter openapi-typescript test:consumer -- "$version"
+          done
   test-e2e:
     runs-on: ubuntu-24.04
     timeout-minutes: 20

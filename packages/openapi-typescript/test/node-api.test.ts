@@ -1,13 +1,12 @@
 import { fileURLToPath } from "node:url";
-import ts from "typescript";
-import openapiTS, { astToString, COMMENT_HEADER, stringToAST } from "../src/index.js";
+import openapiTS, { astToString, COMMENT_HEADER, tsComment, tsLiteral, tsUnion } from "../src/index.js";
 import type { OpenAPITSOptions } from "../src/types.js";
 import { expectTypeScriptToCompile, type TestCase } from "./test-helpers.js";
 
 const EXAMPLES_DIR = new URL("../examples/", import.meta.url);
 
-const DATE = ts.factory.createTypeReferenceNode(ts.factory.createIdentifier("Date"));
-const BLOB = ts.factory.createTypeReferenceNode("Blob");
+const DATE = "Date";
+const BLOB = "Blob";
 
 describe("Node.js API", () => {
   const tests: TestCase<any, OpenAPITSOptions>[] = [
@@ -377,11 +376,7 @@ export type operations = Record<string, never>;`,
         options: {
           transform(schemaObject) {
             if ("format" in schemaObject && schemaObject.format === "date-time") {
-              /**
-               * Tip: use astexplorer.net to first type out the desired TypeScript,
-               * then use the `typescript` parser and it will tell you the desired
-               * AST
-               */
+              // Hooks return the desired TypeScript source directly.
               return DATE;
             }
           },
@@ -568,12 +563,8 @@ export type operations = Record<string, never>;`,
         options: {
           postTransform(_type, options) {
             if (options.path?.includes("Date")) {
-              /**
-               * Tip: use astexplorer.net to first type out the desired TypeScript,
-               * then use the `typescript` parser and it will tell you the desired
-               * AST
-               */
-              return ts.factory.createTypeReferenceNode(ts.factory.createIdentifier("DateOrTime"));
+              // Hooks return the desired TypeScript source directly.
+              return "DateOrTime";
             }
 
             // Previously, in order to access the schema in postTransform,
@@ -593,13 +584,7 @@ export type operations = Record<string, never>;`,
                 return typeof enumMember === "string";
               })
             ) {
-              return ts.factory.createTypeReferenceNode(ts.factory.createIdentifier("Set"), [
-                ts.factory.createUnionTypeNode(
-                  schema.enum.map((value) => {
-                    return ts.factory.createLiteralTypeNode(ts.factory.createStringLiteral(value));
-                  }),
-                ),
-              ]);
+              return `Set<${tsUnion(schema.enum.map((value) => tsLiteral(value)))}>`;
             }
           },
         },
@@ -691,21 +676,8 @@ export type operations = Record<string, never>;`,
             }
 
             if (validationTags.length > 0) {
-              // Create a new property signature
-              const newProperty = ts.factory.updatePropertySignature(
-                property,
-                property.modifiers,
-                property.name,
-                property.questionToken,
-                property.type,
-              );
-
-              // Add JSDoc comment using the same format as addJSDocComment
-              const jsDocText = `*\n * ${validationTags.join("\n * ")}\n `;
-
-              ts.addSyntheticLeadingComment(newProperty, ts.SyntaxKind.MultiLineCommentTrivia, jsDocText, true);
-
-              return newProperty;
+              // Add a JSDoc block using the same format as addJSDocComment
+              return { ...property, comment: tsComment(validationTags, property.indent) };
             }
 
             return property;
@@ -1821,13 +1793,13 @@ export type operations = Record<string, never>;`,
   }
   test("required-only allOf public output compiles across callback modes", async () => {
     const componentPath = "#/components/schemas/CompanyResource";
-    const objectReplacement = typeNode(`{
+    const objectReplacement = `{
       organization?: number;
       addresses?: string[];
       processingTypes?: string[];
-    }`);
-    const missingReplacement = typeNode("{ other: string }");
-    const unionReplacement = typeNode("{ organization?: number } | { other: string }");
+    }`;
+    const missingReplacement = "{ other: string }";
+    const unionReplacement = "{ organization?: number } | { other: string }";
     const standardAssertions = `
       const valid: Generated = { organization: "org", addresses: [], processingTypes: [] };
       // @ts-expect-error all required-only keys are required
@@ -1869,8 +1841,7 @@ export type operations = Record<string, never>;`,
       {
         name: "primitive replacement",
         options: {
-          transform: (_schema, options) =>
-            options.path === componentPath ? ts.factory.createKeywordTypeNode(ts.SyntaxKind.NumberKeyword) : undefined,
+          transform: (_schema, options) => (options.path === componentPath ? "number" : undefined),
         },
         assertions: `
           // @ts-expect-error typed object constraint rejects primitives
@@ -1880,7 +1851,7 @@ export type operations = Record<string, never>;`,
       {
         name: "array replacement",
         options: {
-          transform: (_schema, options) => (options.path === componentPath ? typeNode("string[]") : undefined),
+          transform: (_schema, options) => (options.path === componentPath ? "string[]" : undefined),
         },
         assertions: `
           // @ts-expect-error typed object constraint rejects arrays
@@ -1922,6 +1893,7 @@ export type operations = Record<string, never>;`,
 
   test.each([
     ["public inject alias", { inject: "type WithRequiredObject = unknown;" }],
+    ["escaped inject alias", { inject: "type WithRequired\\u004fbject = unknown;" }],
     [
       "public inject import",
       {
@@ -2007,8 +1979,4 @@ function requiredOnlyAllOfSchema() {
 
 function binaryTransform(schemaObject: any) {
   return schemaObject.format === "binary" ? BLOB : undefined;
-}
-
-function typeNode(source: string): ts.TypeNode {
-  return (stringToAST(`type Generated = ${source}`)[0] as ts.TypeAliasDeclaration).type;
 }
